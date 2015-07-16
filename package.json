@@ -1,0 +1,16 @@
+{
+  "name": "tinkerhub-device-mysensors",
+  "version": "0.0.1",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "scripts": {
+    "prepublish": "gulp build"
+  },
+  "peerDependencies": {
+    "tinkerhub": "^0.0.2"
+  },
+  "devDependencies": {
+    "gulp": "^3.9.0",
+    "tinkerhub-build": "0.0.1"
+  }
+}

@@ -1,11 +1,13 @@
 const SerialPort = require('serialport').SerialPort;
 const net = require('net');
 const sensorFactory = require('./sensor');
+const debug = require('debug')('th.mysensors');
 
 const BroadcastAddress = 255;
 const NodeSensorId = 255;
 const SensorTimeout = 7 * 24 * 60 * 60 * 1000;
 const SensorLiveness = 60 * 60 * 1000;
+const SensorDeviceTimeout = SensorLiveness * 2;
 
 const Commands = {
     Presentation: 0,
@@ -41,12 +43,8 @@ class Controller {
         this._devices = {};
 
         this._com = com;
-        this._socket = com.connect()
-            .on('data', data => this._handleData(data))
-    		.on('error', () => {
-                console.log('Received an error from the socket');
-                // TODO: Reconnect
-            });
+
+        this._connect();
 
         setInterval(() => {
             this._storage.put('sensors', this._sensors);
@@ -58,6 +56,16 @@ class Controller {
 
     close() {
         this._com.disconnect(this._socket);
+    }
+
+    _connect() {
+        this._socket = this._com.connect()
+            .on('data', data => this._handleData(data))
+    		.on('error', () => {
+                console.log('Received an error from the socket');
+                // TODO: Reconnect
+                setTimeout(this._connect.bind(this), 5000);
+            });
     }
 
     _handleData(data) {
@@ -72,6 +80,7 @@ class Controller {
                 const msg = this._buffer.join('') + str.substring(0, idx);
                 this._buffer.length = 0;
 
+                debug('Received', msg);
                 const msgData = msg.split(';');
                 this._message({
                     sender: parseInt(msgData[0]),
@@ -101,7 +110,7 @@ class Controller {
                 break;
             case Commands.Set:
                 const device = this._device(msg.sender, msg.sensor);
-                if(device) device.receive(msg.type, msg.payload);
+                if(device) device._receive(msg.type, msg.payload);
                 break;
             case Commands.Req:
                 break;
@@ -137,9 +146,12 @@ class Controller {
                     sensor: msg.sensor,
                     command: Commands.Internal,
                     type: InternalMessage.Time,
-                    payload: Date.now(9)
+                    payload: Math.floor(Date.now() / 1000)
                 });
                 break;
+            case InternalMessage.SketchName:
+                const node = this._nodes[msg.sender] || (this._nodes[msg.sender] = {});
+                node.name = msg.payload;
         }
     }
 
@@ -148,7 +160,9 @@ class Controller {
         if(! sensor) return;
 
         sensor.type = msg.type;
-        sensor.description = msg.payload || '';
+        if(msg.payload && ! msg.payload.match(/^[0-9]+(\.[0-9]+)$/)) {
+            sensor.description = msg.payload;
+        }
 
         this._bridgeSensor(sensor);
     }
@@ -161,13 +175,15 @@ class Controller {
             (msg.type || 0).toString(10) + ';' +
             (msg.payload || '') + '\n';
 
+        debug('Sending', encoded);
+
         this._socket.write(encoded);
     }
 
     _findFreeId() {
         const now = Date.now();
         for(let i=1; i<255; i++) {
-            if(! this._nodes[i] && now - this._nodes[i].lastSeen < SensorTimeout) {
+            if(! this._nodes[i] || now - this._nodes[i].lastSeen > SensorTimeout) {
                 return i;
             }
         }
@@ -185,21 +201,34 @@ class Controller {
         });
     }
 
+    /**
+     * Bridge all of the remembered sensors.
+     */
     _bridgeSensors() {
+        const now = Date.now();
         Object.keys(this._sensors).forEach(key => {
             const sensor = this._sensors[key];
             if(sensor.type) {
-                this._bridgeSensor(sensor);
+                const node = this._nodes[sensor.node];
+                if(node.lastSeen + SensorDeviceTimeout > now) {
+                    this._bridgeSensor(sensor);
+                }
             }
         });
     }
 
+    /**
+     * Bridge the given sensor
+     */
     _bridgeSensor(sensor) {
+        console.log(sensor);
+
         const key = sensor.node + ':' + sensor.id;
         let device = this._devices[key];
         if(device) return device;
 
-        this._devices[key] = device = sensorFactory(this, sensor);
+        const node = this._nodes[sensor.node];
+        this._devices[key] = device = sensorFactory(this, node, sensor);
         return device;
     }
 

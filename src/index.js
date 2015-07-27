@@ -55,7 +55,7 @@ const device = {
     }
 };
 
-th.register('mysensors:controller', device);
+th.devices.register('mysensors:controller', device);
 
 const connection = th.storage.get('mysensors');
 if(connection) {

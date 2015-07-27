@@ -4,18 +4,18 @@ var values = require('./values');
 const types = {};
 const customTypes = {};
 const dummy = {
-    receive(valueType, value) {},
+    _receive(valueType, value) {},
 
-    remove() {}
+    _remove() {}
 };
 
-module.exports = function(controller, def) {
+module.exports = function(controller, node, def) {
     const type = types[def.type];
     if(! type) return dummy;
 
-    const instance = type(def);
-    instance._device = th.register('mysensors:' + def.node + ':' + def.id, instance);
-    instance.remove = instance._device._remove.bind(instance._device);
+    const instance = type(node, def);
+    instance._device = th.devices.register('mysensors:' + def.node + ':' + def.id, instance);
+    instance._remove = instance._device._remove.bind(instance._device);
     return instance;
 };
 
@@ -62,17 +62,21 @@ function nameOfType(id) {
     return null;
 }
 
-const singleValueType = function(def) {
+const singleValueType = function(node, def) {
+    const name = (node.name ? node.name + ' - ' : '') +
+        (def.description || nameOfType(def.type));
     return {
         metadata: {
             type: [ 'sensor' ],
 
-            name: nameOfType(def.type),
+            name: name,
 
             capabilities: [ 'nameable' ]
         },
 
-        receive(valueType, value) {
+        value: null,
+
+        _receive(valueType, value) {
             value = values.convert(valueType, value);
             this.value = value;
             this._device.emit('value', value);
